@@ -1,0 +1,3 @@
+<Window x:Class="ClipNest.ClipboardPopup" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:controls="clr-namespace:ClipNest.Controls" Title="ClipNest · буфер" Icon="/Assets/Branding/ClipNest.png" Width="388" Height="512" Background="#181620" Foreground="White" FontFamily="Segoe UI" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" SourceInitialized="OnSourceInitialized" PreviewKeyDown="OnKeyDown" Closing="OnClosing" Deactivated="OnDeactivated">
+ <Border Background="#181620" BorderBrush="#46384F" BorderThickness="1" CornerRadius="12" Padding="12"><controls:ClipboardGallery x:Name="Gallery" IsCompact="True"/></Border>
+</Window>

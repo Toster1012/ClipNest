@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ClipNest/ClipNest.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ClipNest.SmokeTests/ClipNest.SmokeTests.csproj" />
+  </Folder>
+</Solution>

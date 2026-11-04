@@ -1,0 +1,8 @@
+bin/
+obj/
+artifacts/
+*.zip
+.vs/
+*.user
+tests/Fixtures/
+tests/Received/

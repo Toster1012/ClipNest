@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -72,7 +74,8 @@ public static class Program
         try
         {
             await RunAsync();
-            Console.WriteLine("PASS: import, file identity, frozen thumbnails, deduplication, FIFO limit, corrupt input, retained transfers, cleanup.");
+            RunReleaseChecks();
+            Console.WriteLine("PASS: import, file identity, frozen thumbnails, deduplication, FIFO limit, corrupt input, retained transfers, cleanup, release versions, assets, ZIP validation.");
         }
         catch (Exception exception)
         {
@@ -82,6 +85,65 @@ public static class Program
         finally
         {
             Application.Current.Shutdown();
+        }
+    }
+
+    private static void RunReleaseChecks()
+    {
+        Require(ReleaseUpdate.ParseVersion("release-1.0") == new Version(1, 0, 0, 0), "Existing release tag is unsupported.");
+        Require(ReleaseUpdate.ParseVersion("v1.10.0") > ReleaseUpdate.ParseVersion("1.9.9"), "Version comparison is lexical.");
+        Require(ReleaseUpdate.ParseVersion("v1.2.0-beta") == null, "Prerelease version accepted.");
+        string MakeRelease(string tag, string assetName = "win-x64.zip", string? digest = null, bool prerelease = false, string? url = null) => JsonSerializer.Serialize(new
+        {
+            tag_name = tag, draft = false, prerelease,
+            assets = new[] { new { name = assetName, size = 128, digest = digest ?? "sha256:" + new string('a', 64), browser_download_url = url ?? "https://github.com/Toster1012/ClipNest/releases/download/" + tag + "/win-x64.zip" } }
+        });
+        Require(ReleaseUpdate.ParseRelease(MakeRelease("release-1.0"), new Version(1, 0)) == null, "Same version offered.");
+        Require(ReleaseUpdate.ParseRelease(MakeRelease("v1.0.0"), new Version(1, 1)) == null, "Downgrade offered.");
+        Require(ReleaseUpdate.ParseRelease(MakeRelease("v1.2.0"), new Version(1, 1))?.Version == new Version(1, 2, 0, 0), "New release not detected.");
+        Require(ReleaseUpdate.ParseRelease(MakeRelease("v1.2.0", "ClipNest-1.2.0-win-x64.zip"), new Version(1, 1)) != null, "Versioned archive not detected.");
+        Require(ReleaseUpdate.ParseRelease(MakeRelease("v1.2.0", "source.zip"), new Version(1, 1)) == null, "Source archive accepted.");
+        Require(ReleaseUpdate.ParseRelease(MakeRelease("v1.2.0", digest: "sha256:invalid"), new Version(1, 1)) == null, "Invalid digest accepted.");
+        Require(ReleaseUpdate.ParseRelease(MakeRelease("v1.2.0", prerelease: true), new Version(1, 1)) == null, "Prerelease offered.");
+        Require(ReleaseUpdate.ParseRelease(MakeRelease("v1.2.0", url: "https://example.com/win-x64.zip"), new Version(1, 1)) == null, "Foreign download URL accepted.");
+
+        string directory = Path.Combine(Path.GetTempPath(), "ClipNestArchiveTests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            string valid = Path.Combine(directory, "valid.zip");
+            using (ZipArchive zip = ZipFile.Open(valid, ZipArchiveMode.Create))
+            {
+                using StreamWriter writer = new StreamWriter(zip.CreateEntry("win-x64/ClipNest.exe").Open());
+                writer.Write("fixture");
+            }
+
+            ReleaseUpdate.ExtractArchive(valid, Path.Combine(directory, "valid"));
+            Require(File.Exists(Path.Combine(directory, "valid", "win-x64", "ClipNest.exe")), "Wrapped archive failed.");
+
+            foreach (string name in new[] { "../escape.txt", "ClipNest.exe:evil", "other.txt" })
+            {
+                string archive = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".zip");
+                using (ZipArchive zip = ZipFile.Open(archive, ZipArchiveMode.Create))
+                {
+                    using StreamWriter writer = new StreamWriter(zip.CreateEntry(name).Open());
+                    writer.Write("fixture");
+                }
+
+                bool rejected = false;
+
+                try { ReleaseUpdate.ExtractArchive(archive, Path.Combine(directory, Guid.NewGuid().ToString("N"))); }
+                catch (InvalidDataException) { rejected = true; }
+
+                Require(rejected, "Invalid archive accepted: " + name);
+            }
+
+            Require(File.Exists(Path.Combine(directory, "escape.txt")) == false, "Archive escaped destination.");
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
         }
     }
 

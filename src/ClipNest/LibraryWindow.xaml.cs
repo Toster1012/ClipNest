@@ -24,21 +24,31 @@ public partial class LibraryWindow : Window
     private readonly ClipboardHistory _history;
     private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
     private readonly DispatcherTimer _clipboardRetry;
+    private readonly DispatcherTimer _updatePoll;
     private readonly ClipboardPopup _popup;
     private ClipboardEvents? _nativeEvents;
     private Forms.NotifyIcon? _trayIcon;
     private bool _isExiting;
     private int _retryCount;
+    private DateTimeOffset _nextUpdateCheck = DateTimeOffset.MinValue;
+    private bool _isCheckingUpdates;
+    private ReleaseUpdate? _availableUpdate;
+    private Version? _offeredUpdateVersion;
+    private UpdateWindow? _updateWindow;
 
     public LibraryWindow()
     {
         InitializeComponent();
+        ReleaseUpdate.CleanupCompletedUpdates();
         _preferences = Preferences.Load();
         _history = new ClipboardHistory { Capacity = _preferences.Capacity };
         Gallery.Bind(_history);
-        _popup = new ClipboardPopup(_history);
+        _popup = new ClipboardPopup(_history, _preferences);
         _clipboardRetry = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ClipboardRetryMilliseconds) };
         _clipboardRetry.Tick += OnClipboardRetry;
+        _updatePoll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        _updatePoll.Tick += async (sender, eventArgs) => await CheckForUpdatesAsync(false);
+        _updatePoll.Start();
     }
 
     public void ShowPopup()
@@ -55,6 +65,8 @@ public partial class LibraryWindow : Window
 
         _isExiting = true;
         _clipboardRetry.Stop();
+        _updatePoll.Stop();
+        _updateWindow?.CancelForShutdown();
         _shutdown.Cancel();
         _nativeEvents?.Dispose();
         _trayIcon?.Dispose();
@@ -73,6 +85,7 @@ public partial class LibraryWindow : Window
         menu.Items.Add("Буфер · Win+V", null, (sender, eventArgs) => ShowPopup());
         menu.Items.Add("Открыть коллекцию", null, (sender, eventArgs) => OpenCollection());
         menu.Items.Add("Настройки", null, (sender, eventArgs) => OpenSettings());
+        menu.Items.Add("Проверить обновления", null, async (sender, eventArgs) => await CheckForUpdatesAsync(true));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Выйти и очистить историю", null, (sender, eventArgs) => ExitApplication());
         using Stream iconStream = Application.GetResourceStream(new Uri("pack://application:,,,/Assets/Branding/ClipNest.ico")).Stream;
@@ -83,6 +96,64 @@ public partial class LibraryWindow : Window
         {
             ShowCaptureError("Перехват Win+V недоступен. Откройте буфер через трей.");
             _trayIcon.ShowBalloonTip(HotkeyWarningDurationMilliseconds, "ClipNest", CaptureStatus.Text, Forms.ToolTipIcon.Warning);
+        }
+    }
+
+    private async System.Threading.Tasks.Task CheckForUpdatesAsync(bool isManual)
+    {
+        if (_isCheckingUpdates || _isExiting)
+        {
+            return;
+        }
+
+        if (_updateWindow != null)
+        {
+            if (isManual)
+            {
+                _updateWindow.Activate();
+            }
+
+            return;
+        }
+
+        _isCheckingUpdates = true;
+
+        try
+        {
+            if (isManual || DateTimeOffset.UtcNow >= _nextUpdateCheck)
+            {
+                _nextUpdateCheck = DateTimeOffset.UtcNow.AddDays(1);
+                _availableUpdate = await ReleaseUpdate.CheckAsync(_shutdown.Token);
+            }
+
+            if (_isExiting)
+            {
+                return;
+            }
+
+            if (_availableUpdate != null && (isManual || _offeredUpdateVersion != _availableUpdate.Version) && _popup.IsVisible == false && _popup.IsPasting == false)
+            {
+                _offeredUpdateVersion = _availableUpdate.Version;
+                _updateWindow = new UpdateWindow(_availableUpdate);
+                _updateWindow.Closed += (sender, eventArgs) => _updateWindow = null;
+                _updateWindow.Show();
+            }
+            else if (isManual && _availableUpdate == null)
+            {
+                MessageBox.Show($"Установлена версия {ReleaseUpdate.CurrentVersionText}. Доступных обновлений нет.", "ClipNest");
+            }
+        }
+        catch (OperationCanceledException) when (_isExiting) { }
+        catch (Exception exception)
+        {
+            if (isManual && _isExiting == false)
+            {
+                MessageBox.Show($"Не удалось проверить обновления: {exception.Message}", "ClipNest");
+            }
+        }
+        finally
+        {
+            _isCheckingUpdates = false;
         }
     }
 
@@ -184,6 +255,7 @@ public partial class LibraryWindow : Window
         ShowLargeWindow();
         CapacityInput.Text = _preferences.Capacity.ToString();
         StartupInput.IsChecked = Preferences.IsStartupEnabled();
+        PopupCornerInput.IsChecked = _preferences.OpenPopupInScreenCorner;
         SettingsPanel.Visibility = Visibility.Visible;
         Gallery.Visibility = Visibility.Collapsed;
         SettingsTab.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString("#3B2E52")!;
@@ -212,6 +284,7 @@ public partial class LibraryWindow : Window
         {
             Preferences.SetStartup(StartupInput.IsChecked == true);
             _preferences.Capacity = capacity;
+            _preferences.OpenPopupInScreenCorner = PopupCornerInput.IsChecked == true;
             _preferences.Save();
             _history.Capacity = capacity;
             _history.Trim();

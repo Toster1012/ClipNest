@@ -8,8 +8,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>ClipNest</AssemblyName>
+    <Version>1.1.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\Branding\ClipNest.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup><Resource Include="Assets\Branding\ClipNest.png"/><Resource Include="Assets\Branding\ClipNest.ico"/></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="Services\ApplyUpdate.ps1"/></ItemGroup>
 </Project>

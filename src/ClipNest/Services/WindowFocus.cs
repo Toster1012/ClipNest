@@ -1,5 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 
@@ -7,6 +9,89 @@ namespace ClipNest.Services;
 
 public static class WindowFocus
 {
+    public static PasteTarget CaptureTarget()
+    {
+        IntPtr window = GetForegroundWindow();
+        uint thread = GetWindowThreadProcessId(window, out uint process);
+        GuiThreadInformation information = new GuiThreadInformation { Size = Marshal.SizeOf<GuiThreadInformation>() };
+        IntPtr focusedControl = GetGUIThreadInfo(thread, ref information) ? information.Focus : IntPtr.Zero;
+        return new PasteTarget(window, focusedControl, process);
+    }
+
+    public static async Task<bool> RestoreTargetAsync(PasteTarget target, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (IsTargetValid(target) == false)
+        {
+            return false;
+        }
+
+        if (IsForegroundWindow(target.Window) == false)
+        {
+            SetForegroundWindow(target.Window);
+        }
+
+        for (int attempt = 0; IsForegroundWindow(target.Window) == false; attempt++)
+        {
+            if (attempt >= 49 || IsTargetValid(target) == false)
+            {
+                return false;
+            }
+
+            await Task.Delay(10, cancellationToken);
+        }
+
+        if (IsTargetFocused(target))
+        {
+            return true;
+        }
+
+        if (target.Control == IntPtr.Zero || IsWindow(target.Control) == false || (target.Control != target.Window && IsChild(target.Window, target.Control) == false))
+        {
+            return false;
+        }
+
+        uint targetThread = GetWindowThreadProcessId(target.Window, IntPtr.Zero);
+        uint currentThread = GetCurrentThreadId();
+        bool attached = targetThread != currentThread && AttachThreadInput(currentThread, targetThread, true);
+
+        try
+        {
+            if (IsForegroundWindow(target.Window))
+            {
+                SetFocus(target.Control);
+            }
+        }
+        finally
+        {
+            if (attached)
+            {
+                AttachThreadInput(currentThread, targetThread, false);
+            }
+        }
+
+        return IsTargetFocused(target);
+    }
+
+    public static bool IsTargetValid(PasteTarget target)
+    {
+        GetWindowThreadProcessId(target.Window, out uint process);
+        return target.Window != IntPtr.Zero && IsWindow(target.Window) && process == target.ProcessIdentifier && process != (uint)Environment.ProcessId;
+    }
+
+    public static bool IsTargetFocused(PasteTarget target)
+    {
+        if (IsTargetValid(target) == false || IsForegroundWindow(target.Window) == false)
+        {
+            return false;
+        }
+
+        GuiThreadInformation information = new GuiThreadInformation { Size = Marshal.SizeOf<GuiThreadInformation>() };
+        uint thread = GetWindowThreadProcessId(target.Window, IntPtr.Zero);
+        return target.Control == IntPtr.Zero || (GetGUIThreadInfo(thread, ref information) && information.Focus == target.Control);
+    }
+
     public static bool IsForegroundWindow(IntPtr handle)
     {
         return GetForegroundWindow() == handle;
@@ -51,6 +136,32 @@ public static class WindowFocus
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GuiThreadInformation
+    {
+        public int Size;
+        public uint Flags;
+        public IntPtr Active;
+        public IntPtr Focus;
+        public IntPtr Capture;
+        public IntPtr MenuOwner;
+        public IntPtr MoveSize;
+        public IntPtr Caret;
+        public WindowBounds CaretBounds;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetGUIThreadInfo(uint thread, ref GuiThreadInformation information);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindow(IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsChild(IntPtr parent, IntPtr child);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct WindowBounds
@@ -99,3 +210,5 @@ public static class WindowFocus
     [DllImport("user32.dll")]
     private static extern IntPtr SetFocus(IntPtr handle);
 }
+
+public readonly record struct PasteTarget(IntPtr Window, IntPtr Control, uint ProcessIdentifier);

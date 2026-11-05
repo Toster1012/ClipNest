@@ -23,6 +23,12 @@ public static class WindowAppearance
             ResizeBorderThickness = isResizable ? new Thickness(5) : new Thickness(0),
             UseAeroCaptionButtons = false
         });
+
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) == false)
+        {
+            return;
+        }
+
         IntPtr handle = new WindowInteropHelper(window).Handle;
         int cornerPreference = RoundCorners;
         int borderColor = NoBorderColor;

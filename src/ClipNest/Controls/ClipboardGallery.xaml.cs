@@ -21,6 +21,7 @@ public partial class ClipboardGallery : UserControl
     public event Action? DragStarted;
     public event Action<DragDropEffects>? DragFinished;
     public event Action? Copied;
+    public event Action<ClipboardEntry[]>? PasteRequested;
 
     public static readonly DependencyProperty IsCompactProperty = DependencyProperty.Register(nameof(IsCompact), typeof(bool), typeof(ClipboardGallery), new PropertyMetadata(false, OnLayoutChanged));
     private const int SelectionScrollMilliseconds = 70;
@@ -59,6 +60,19 @@ public partial class ClipboardGallery : UserControl
     }
 
     public bool IsMenuOpen => EntriesList.ContextMenu?.IsOpen == true;
+
+    public void ShowStatus(string message) => SetStatus(message);
+
+    public void ResetSelection()
+    {
+        EntriesList.UnselectAll();
+        Status.Visibility = Visibility.Collapsed;
+    }
+
+    private ClipboardEntry[] GetOrderedSelection()
+    {
+        return EntriesList.Items.Cast<ClipboardEntry>().Where(entry => EntriesList.SelectedItems.Contains(entry)).ToArray();
+    }
 
     public void Bind(ClipboardHistory history)
     {
@@ -171,7 +185,7 @@ public partial class ClipboardGallery : UserControl
 
     private void CopySelection()
     {
-        ClipboardEntry[] entries = EntriesList.SelectedItems.Cast<ClipboardEntry>().ToArray();
+        ClipboardEntry[] entries = GetOrderedSelection();
 
         if (entries.Length == 0 || _history == null)
         {
@@ -243,7 +257,9 @@ public partial class ClipboardGallery : UserControl
             return;
         }
 
-        if (_isPointerPending && _hasMoved == false && _wasSelected && _pressedEntry != null && _isDragHandle == false)
+        bool shouldPaste = IsCompact && _hasMoved == false && _isDragHandle == false && _pressedEntry != null;
+
+        if (IsCompact == false && _hasMoved == false && _wasSelected && _pressedEntry != null && _isDragHandle == false)
         {
             EntriesList.SelectedItems.Remove(_pressedEntry);
         }
@@ -257,6 +273,17 @@ public partial class ClipboardGallery : UserControl
         }
 
         eventArgs.Handled = true;
+
+        if (shouldPaste)
+        {
+            if (_wasSelected == false && _pressedEntry != null)
+            {
+                EntriesList.UnselectAll();
+                EntriesList.SelectedItems.Add(_pressedEntry);
+            }
+
+            PasteRequested?.Invoke(GetOrderedSelection());
+        }
     }
 
     private void OnLostCapture(object sender, MouseEventArgs eventArgs)
@@ -354,7 +381,7 @@ public partial class ClipboardGallery : UserControl
     {
         _isPointerPending = false;
         _selectionScroll.Stop();
-        ClipboardEntry[] entries = EntriesList.SelectedItems.Cast<ClipboardEntry>().ToArray();
+        ClipboardEntry[] entries = GetOrderedSelection();
         Mouse.Capture(null);
 
         if (entries.Length == 0 || _history == null)
@@ -454,7 +481,14 @@ public partial class ClipboardGallery : UserControl
         }
         else if (eventArgs.Key == Key.Enter)
         {
-            CopySelection();
+            if (IsCompact)
+            {
+                PasteRequested?.Invoke(GetOrderedSelection());
+            }
+            else
+            {
+                CopySelection();
+            }
             eventArgs.Handled = true;
         }
     }

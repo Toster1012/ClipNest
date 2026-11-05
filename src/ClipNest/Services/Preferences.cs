@@ -14,6 +14,7 @@ public sealed class Preferences
     private static readonly string _settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClipNest", "settings.json");
 
     public int Capacity { get; set; } = DefaultCapacity;
+    public bool OpenPopupInScreenCorner { get; set; } = true;
 
     public static Preferences Load()
     {

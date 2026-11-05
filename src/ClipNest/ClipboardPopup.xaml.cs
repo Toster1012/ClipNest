@@ -1,8 +1,10 @@
 using System;
 using System.ComponentModel;
+using System.Linq;
+using System.Threading;
+using ClipNest.Models;
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using ClipNest.Services;
@@ -12,16 +14,29 @@ namespace ClipNest;
 
 public partial class ClipboardPopup : Window
 {
-    private const int ScreenMargin = 16;
     private const int ForegroundPollMilliseconds = 100;
     private readonly DispatcherTimer _foregroundPoll;
     private bool _isExiting;
     private bool _isDragging;
+    private readonly ClipboardHistory _history;
+    private readonly Preferences _preferences;
+    private readonly double _preferredWidth;
+    private readonly double _preferredHeight;
+    private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
+    private PasteTarget _pasteTarget;
+    private bool _isPasting;
 
-    public ClipboardPopup(ClipboardHistory history)
+    public bool IsPasting => _isPasting;
+
+    public ClipboardPopup(ClipboardHistory history, Preferences preferences)
     {
         InitializeComponent();
+        _history = history;
+        _preferences = preferences;
+        _preferredWidth = Width;
+        _preferredHeight = Height;
         Gallery.Bind(history);
+        Gallery.PasteRequested += OnPasteRequested;
         Gallery.DragStarted += OnDragStarted;
         Gallery.DragFinished += OnDragFinished;
         Gallery.Copied += Hide;
@@ -42,11 +57,15 @@ public partial class ClipboardPopup : Window
 
     public void ShowPanel()
     {
+        if (_isPasting || IsVisible)
+        {
+            return;
+        }
+
+        _pasteTarget = WindowFocus.CaptureTarget();
+        Gallery.ResetSelection();
         Show();
-        Forms.Screen screen = Forms.Screen.FromPoint(Forms.Cursor.Position);
-        DpiScale scale = VisualTreeHelper.GetDpi(this);
-        Left = (screen.WorkingArea.Right - ScreenMargin) / scale.DpiScaleX - Width;
-        Top = (screen.WorkingArea.Bottom - ScreenMargin) / scale.DpiScaleY - Height;
+        PopupPlacement.Position(this, _preferences.OpenPopupInScreenCorner, _preferredWidth, _preferredHeight);
         WindowFocus.Activate(this);
     }
 
@@ -80,8 +99,43 @@ public partial class ClipboardPopup : Window
     public void PrepareShutdown()
     {
         _isExiting = true;
+        _shutdown.Cancel();
         _foregroundPoll.Stop();
         Close();
+    }
+
+    private async void OnPasteRequested(ClipboardEntry[] entries)
+    {
+        if (_isPasting || entries.Length == 0)
+        {
+            return;
+        }
+
+        if (WindowFocus.IsTargetValid(_pasteTarget) == false)
+        {
+            Gallery.ShowStatus("Сначала выберите поле в другом приложении и откройте Win+V.");
+            return;
+        }
+
+        _isPasting = true;
+
+        try
+        {
+            DataObject[] items = entries.Select(entry => ClipboardTransfer.CreateData(new[] { entry }, _history)).ToArray();
+            await ClipboardPaste.PasteAsync(_pasteTarget, items, Hide, _shutdown.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            if (_isExiting == false)
+            {
+                MessageBox.Show(exception.Message, "ClipNest — вставка остановлена", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+        finally
+        {
+            _isPasting = false;
+        }
     }
 
     private void OnSourceInitialized(object? sender, EventArgs eventArgs)
